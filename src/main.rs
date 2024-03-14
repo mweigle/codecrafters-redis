@@ -22,7 +22,8 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     loop {
         let reader = BufReader::new(&mut stream);
         let mut lines_reader = reader.lines();
-        if let Some(_next_line) = lines_reader.next_line().await? {
+        if let Some(next_line) = lines_reader.next_line().await? {
+            println!("{next_line}");
             stream.write_all(b"+PONG\r\n").await?;
         }
     }
