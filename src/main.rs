@@ -1,4 +1,7 @@
-use std::{io::Write, net::TcpListener};
+use std::{
+    io::{BufRead, BufReader, Write},
+    net::{TcpListener, TcpStream},
+};
 
 fn main() -> anyhow::Result<()> {
     println!("Logs from your program will appear here!");
@@ -8,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                write!(stream, "+PONG\r\n")?;
+                handle_connection(stream)?;
             }
             Err(e) => {
                 anyhow::bail!("error: {}", e);
@@ -16,4 +19,15 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
+    loop {
+        let reader = BufReader::new(&mut stream);
+        let mut lines_reader = reader.lines();
+        if let Some(next_line) = lines_reader.next() {
+            let _line = next_line?;
+            write!(stream, "+PONG\r\n")?;
+        }
+    }
 }
