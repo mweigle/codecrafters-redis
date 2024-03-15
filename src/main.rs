@@ -72,21 +72,25 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
         s.clear();
         reader.read_line(&mut s).await?;
         println!("read at start of loop: {s}");
-        let mut bytes = s.as_bytes();
-        let dt = match bytes.get_u8() {
-            b'+' => DataType::SimpleString(s[1..].to_string()),
-            b'-' => DataType::SimpleError(s[1..].to_string()),
-            b':' => DataType::Integer(bytes.get_int(bytes.len())), // TODO: probably does not work
-            b'$' => {
+        let mut bytes = s.chars();
+        let dt = match bytes.next().context("no data type given")? {
+            '+' => DataType::SimpleString(s[1..].to_string()),
+            '-' => DataType::SimpleError(s[1..].to_string()),
+            ':' => DataType::Integer(todo!()), // TODO: probably does not work
+            '$' => {
                 println!("bytes at start of bulk string parsing: {:?}", bytes);
-                let length = bytes.get_int(bytes.len()) as usize;
+                let length = s[1..bytes.take_while(|c| *c != '\r').count() + 1]
+                    .parse()
+                    .unwrap();
                 let mut data = String::new();
                 reader.read_line(&mut data).await?;
                 assert_eq!(data.len(), length, "string length was wrong");
                 DataType::BulkString(data)
             }
-            b'*' => {
-                let element_count = bytes.get_int(bytes.len()) as usize;
+            '*' => {
+                let element_count = s[1..bytes.take_while(|c| *c != '\r').count() + 1]
+                    .parse()
+                    .unwrap();
                 println!("array detected, element count: {element_count}");
                 if element_count > 0 {
                     current_array = Some((Vec::with_capacity(element_count), element_count));
