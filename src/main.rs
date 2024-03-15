@@ -78,13 +78,11 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
             '-' => DataType::SimpleError(s[1..].to_string()),
             ':' => DataType::Integer(todo!()), // TODO: probably does not work
             '$' => {
-                println!("bytes at start of bulk string parsing: {:?}", bytes);
                 let length_str = &s[1..bytes.take_while(|c| *c != '\r').count() + 1];
                 let length = length_str.parse().unwrap();
-                println!("actual bs: {}", length_str);
                 let mut data = String::new();
                 reader.read_line(&mut data).await?;
-                assert_eq!(data.len(), length, "string length was wrong");
+                assert_eq!(data.len() - 2, length, "string length was wrong"); // need to subtract \r\n
                 DataType::BulkString(data)
             }
             '*' => {
