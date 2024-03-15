@@ -71,6 +71,7 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
     loop {
         s.clear();
         reader.read_line(&mut s).await?;
+        println!("read at start of loop: {s}");
         let mut bytes = s.as_bytes();
         let dt = match bytes.get_u8() {
             b'+' => DataType::SimpleString(s[1..].to_string()),
