@@ -46,7 +46,9 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
                             };
                             send_bulk_string(&mut stream, &echo_string).await?;
                         }
-                        "ping" => stream.write_all(b"+PONG\r\n").await?,
+                        "ping" => send_simple_string(&mut stream, "PONG").await?,
+                        "set" => {}
+                        "get" => {}
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
@@ -54,6 +56,13 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
             other => anyhow::bail!("{:?} not yet implemented!", other),
         }
     }
+}
+
+async fn send_simple_string(stream: &mut TcpStream, msg: &str) -> anyhow::Result<()> {
+    stream
+        .write_all(format!("+{}\r\n", msg).as_bytes())
+        .await
+        .with_context(|| format!("failed to send simple string '{msg}'"))
 }
 
 async fn send_bulk_string(stream: &mut TcpStream, msg: &str) -> anyhow::Result<()> {
@@ -69,7 +78,7 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
     loop {
         s.clear();
         reader.read_line(&mut s).await?;
-        println!("read at start of loop: {s}");
+        // println!("read at start of loop: {s}");
         let mut bytes = s.chars();
         let dt = match bytes.next().context("no data type given")? {
             '+' => DataType::SimpleString(s[1..].trim_end().to_string()),
@@ -88,7 +97,7 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
                 let element_count = s[1..bytes.take_while(|c| *c != '\r').count() + 1]
                     .parse()
                     .unwrap();
-                println!("array detected, element count: {element_count}");
+                // println!("array detected, element count: {element_count}");
                 if element_count > 0 {
                     current_array = Some((Vec::with_capacity(element_count), element_count));
                     continue;
