@@ -78,6 +78,7 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
             b'-' => DataType::SimpleError(s[1..].to_string()),
             b':' => DataType::Integer(bytes.get_int(bytes.len())), // TODO: probably does not work
             b'$' => {
+                println!("bytes at start of bulk string parsing: {:?}", bytes);
                 let length = bytes.get_int(bytes.len()) as usize;
                 let mut data = String::new();
                 reader.read_line(&mut data).await?;
@@ -86,6 +87,7 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
             }
             b'*' => {
                 let element_count = bytes.get_int(bytes.len()) as usize;
+                println!("array detected, element count: {element_count}");
                 if element_count > 0 {
                     current_array = Some((Vec::with_capacity(element_count), element_count));
                     continue;
