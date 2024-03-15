@@ -4,8 +4,6 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use bytes::Buf;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
@@ -74,15 +72,16 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
         println!("read at start of loop: {s}");
         let mut bytes = s.chars();
         let dt = match bytes.next().context("no data type given")? {
-            '+' => DataType::SimpleString(s[1..].to_string()),
-            '-' => DataType::SimpleError(s[1..].to_string()),
-            ':' => DataType::Integer(todo!()), // TODO: probably does not work
+            '+' => DataType::SimpleString(s[1..].trim_end().to_string()),
+            '-' => DataType::SimpleError(s[1..].trim_end().to_string()),
+            // ':' => DataType::Integer(todo!()), // TODO: probably does not work
             '$' => {
                 let length_str = &s[1..bytes.take_while(|c| *c != '\r').count() + 1];
                 let length = length_str.parse().unwrap();
                 let mut data = String::new();
                 reader.read_line(&mut data).await?;
-                assert_eq!(data.len() - 2, length, "string length was wrong"); // need to subtract \r\n
+                let data = data.trim_end().to_string();
+                assert_eq!(data.len(), length, "string length was wrong");
                 DataType::BulkString(data)
             }
             '*' => {
