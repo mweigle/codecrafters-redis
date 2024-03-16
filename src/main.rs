@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::Context;
+use bytes::Bytes;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -282,7 +283,18 @@ async fn invoke_psync(stream: &mut TcpStream, config: &Arc<Config>) -> anyhow::R
             config.replication_id, config.replication_offset
         ),
     )
-    .await
+    .await?;
+    let rdb = Bytes::from_static(&[
+        82, 69, 68, 73, 83, 48, 48, 49, 49, 250, 9, 114, 101, 100, 105, 115, 45, 118, 101, 114, 5,
+        55, 46, 50, 46, 48, 250, 10, 114, 101, 100, 105, 115, 45, 98, 105, 116, 115, 192, 64, 250,
+        5, 99, 116, 105, 109, 101, 194, 109, 8, 188, 101, 250, 8, 117, 115, 101, 100, 45, 109, 101,
+        109, 194, 176, 196, 16, 0, 250, 8, 97, 111, 102, 45, 98, 97, 115, 101, 192, 0, 255, 240,
+        110, 59, 254, 192, 255, 90, 162,
+    ]);
+    stream
+        .write_all(format!("${}\r\n", rdb.len()).as_bytes())
+        .await?;
+    stream.write_all(&rdb).await.context("failed to send file")
 }
 
 async fn send_simple_string(stream: &mut TcpStream, msg: &str) -> anyhow::Result<()> {
