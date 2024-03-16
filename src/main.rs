@@ -126,12 +126,33 @@ async fn master_handshake(repl_config: &ReplicaOf, port: &str) -> anyhow::Result
         ],
     )
     .await?;
+    let mut reader = BufReader::new(&mut stream);
+    let data_type = parse_data_type(&mut reader).await?;
+    let DataType::SimpleString(s) = data_type else {
+        anyhow::bail!("master sent unexpected response");
+    };
+    assert_eq!(s, "OK", "'{s}' was sent instead of OK");
     send_array(
         &mut stream,
         &[
             DataType::BulkString("REPLCONF".to_string()),
             DataType::BulkString("capa".to_string()),
             DataType::BulkString("psync2".to_string()),
+        ],
+    )
+    .await?;
+    let mut reader = BufReader::new(&mut stream);
+    let data_type = parse_data_type(&mut reader).await?;
+    let DataType::SimpleString(s) = data_type else {
+        anyhow::bail!("master sent unexpected response");
+    };
+    assert_eq!(s, "OK", "'{s}' was sent instead of OK"); // TODO: lots of duplication here, make function "wait_for_X"
+    send_array(
+        &mut stream,
+        &[
+            DataType::BulkString("PSYNC".to_string()),
+            DataType::BulkString("?".to_string()),
+            DataType::BulkString("-1".to_string()),
         ],
     )
     .await
