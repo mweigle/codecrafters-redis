@@ -14,23 +14,57 @@ use tokio::{
 
 const DEFAULT_PORT: &str = "6379";
 
+#[derive(Debug)]
+struct ReplicaOf {
+    master_host: String,
+    master_port: String,
+}
+
+#[derive(Debug)]
+struct Config {
+    port: String,
+    replica_of: Option<ReplicaOf>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_PORT.to_string(),
+            replica_of: None,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut port = DEFAULT_PORT.to_string();
+    let mut config = Config::default();
     let mut args = env::args();
     while let Some(arg) = args.next() {
         if arg == "--port" {
             if let Some(p) = args.next() {
-                port = p;
+                config.port = p;
+            }
+        }
+        if arg == "--replicaof" {
+            if let (Some(master_host), Some(master_port)) = (args.next(), args.next()) {
+                config.replica_of = Some(ReplicaOf {
+                    master_host,
+                    master_port,
+                });
             }
         }
     }
-    let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", config.port)).await?;
     let store = Arc::new(Mutex::new(HashMap::new()));
+    let config = Arc::new(config);
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                tokio::spawn(handle_connection(stream, Arc::clone(&store)));
+                tokio::spawn(handle_connection(
+                    stream,
+                    Arc::clone(&store),
+                    Arc::clone(&config),
+                ));
             }
             Err(e) => {
                 anyhow::bail!("error: {}", e);
@@ -56,7 +90,11 @@ struct StoreValue {
     expiry: Option<Instant>,
 }
 
-async fn handle_connection(mut stream: TcpStream, store: Store) -> anyhow::Result<()> {
+async fn handle_connection(
+    mut stream: TcpStream,
+    store: Store,
+    config: Arc<Config>,
+) -> anyhow::Result<()> {
     loop {
         let mut reader = BufReader::new(&mut stream);
         let data_type = parse_data_type(&mut reader).await?;
@@ -77,7 +115,7 @@ async fn handle_connection(mut stream: TcpStream, store: Store) -> anyhow::Resul
                         "ping" => send_simple_string(&mut stream, "PONG").await?,
                         "set" => invoke_set(&mut stream, arr, &store).await?,
                         "get" => invoke_get(&mut stream, arr, &store).await?,
-                        "info" => invoke_info(&mut stream, arr).await?,
+                        "info" => invoke_info(&mut stream, arr, &config).await?,
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
@@ -138,13 +176,22 @@ async fn invoke_get(
     }
 }
 
-async fn invoke_info(stream: &mut TcpStream, arr: Vec<DataType>) -> anyhow::Result<()> {
+async fn invoke_info(
+    stream: &mut TcpStream,
+    arr: Vec<DataType>,
+    config: &Arc<Config>,
+) -> anyhow::Result<()> {
     let mut args = arr.into_iter().skip(1);
     let Some(DataType::BulkString(command)) = args.next() else {
         anyhow::bail!("command must be given!")
     };
     if command == "replication" {
-        return send_bulk_string(stream, "role:master").await;
+        let role = if config.replica_of.is_none() {
+            "master"
+        } else {
+            "slave"
+        };
+        return send_bulk_string(stream, &format!("role:{role}")).await;
     }
     // send_bulk_string(stream, "").await
     todo!()
