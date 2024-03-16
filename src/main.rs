@@ -38,6 +38,7 @@ enum DataType {
 
 type Store = Arc<Mutex<HashMap<String, StoreValue>>>;
 
+#[derive(Debug)]
 struct StoreValue {
     value: String,
     expiry: Option<Instant>,
@@ -110,6 +111,7 @@ async fn invoke_get(
     let DataType::BulkString(k) = &arr[1] else {
         anyhow::bail!("key must be given!");
     };
+    println!("{:?}", store.lock().await.get(k));
     match store.lock().await.get(k) {
         Some(v) => match v.expiry {
             Some(expiry) if expiry <= Instant::now() => send_null(stream).await,
