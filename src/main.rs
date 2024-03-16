@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use tokio::{
@@ -32,10 +36,14 @@ enum DataType {
     Array(Vec<DataType>),
 }
 
-async fn handle_connection(
-    mut stream: TcpStream,
-    store: Arc<Mutex<HashMap<String, String>>>,
-) -> anyhow::Result<()> {
+type Store = Arc<Mutex<HashMap<String, StoreValue>>>;
+
+struct StoreValue {
+    value: String,
+    expiry: Option<Instant>,
+}
+
+async fn handle_connection(mut stream: TcpStream, store: Store) -> anyhow::Result<()> {
     loop {
         let mut reader = BufReader::new(&mut stream);
         let data_type = parse_data_type(&mut reader).await?;
@@ -54,30 +62,60 @@ async fn handle_connection(
                             send_bulk_string(&mut stream, &echo_string).await?;
                         }
                         "ping" => send_simple_string(&mut stream, "PONG").await?,
-                        "set" => {
-                            let (DataType::BulkString(k), DataType::BulkString(v)) =
-                                (&arr[1], &arr[2])
-                            else {
-                                anyhow::bail!("key and value must be given");
-                            };
-                            store.lock().await.insert(k.clone(), v.clone());
-                            send_simple_string(&mut stream, "OK").await?;
-                        }
-                        "get" => {
-                            let DataType::BulkString(k) = &arr[1] else {
-                                anyhow::bail!("key must be given!");
-                            };
-                            match store.lock().await.get(k) {
-                                Some(v) => send_bulk_string(&mut stream, v).await?,
-                                None => send_null(&mut stream).await?,
-                            }
-                        }
+                        "set" => invoke_set(&mut stream, arr, &store).await?,
+                        "get" => invoke_get(&mut stream, arr, &store).await?,
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
             }
             other => anyhow::bail!("{:?} not yet implemented!", other),
         }
+    }
+}
+
+async fn invoke_set(
+    stream: &mut TcpStream,
+    arr: Vec<DataType>,
+    store: &Store,
+) -> anyhow::Result<()> {
+    let mut args = arr.into_iter();
+    let (Some(DataType::BulkString(k)), Some(DataType::BulkString(v))) = (args.next(), args.next())
+    else {
+        anyhow::bail!("key and value must be bulk strings");
+    };
+    let mut value = StoreValue {
+        value: v,
+        expiry: None,
+    };
+    if let Some(DataType::BulkString(arg)) = args.next() {
+        if arg == "px" {
+            let Some(DataType::BulkString(millis)) = args.next() else {
+                anyhow::bail!("PX without expiry");
+            };
+            let millis = millis
+                .parse()
+                .with_context(|| format!("{millis} is not a valid integer"))?;
+            value.expiry = Some(Instant::now() + Duration::from_millis(millis));
+        }
+    }
+    store.lock().await.insert(k, value);
+    send_simple_string(stream, "OK").await
+}
+
+async fn invoke_get(
+    stream: &mut TcpStream,
+    arr: Vec<DataType>,
+    store: &Store,
+) -> anyhow::Result<()> {
+    let DataType::BulkString(k) = &arr[1] else {
+        anyhow::bail!("key must be given!");
+    };
+    match store.lock().await.get(k) {
+        Some(v) => match v.expiry {
+            Some(expiry) if expiry <= Instant::now() => send_null(stream).await,
+            _ => send_bulk_string(stream, &v.value).await,
+        },
+        None => send_null(stream).await,
     }
 }
 
