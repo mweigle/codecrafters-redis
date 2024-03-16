@@ -24,6 +24,8 @@ struct ReplicaOf {
 struct Config {
     port: String,
     replica_of: Option<ReplicaOf>,
+    replication_id: String,
+    replication_offset: u32,
 }
 
 impl Default for Config {
@@ -31,6 +33,8 @@ impl Default for Config {
         Self {
             port: DEFAULT_PORT.to_string(),
             replica_of: None,
+            replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+            replication_offset: 0,
         }
     }
 }
@@ -191,7 +195,14 @@ async fn invoke_info(
         } else {
             "slave"
         };
-        return send_bulk_string(stream, &format!("role:{role}")).await;
+        return send_bulk_string(
+            stream,
+            &format!(
+                "role:{}\r\nmaster_replid:{}\r\nmaster_repl_offset:{}",
+                role, config.replication_id, config.replication_offset
+            ),
+        )
+        .await;
     }
     // send_bulk_string(stream, "").await
     todo!()
