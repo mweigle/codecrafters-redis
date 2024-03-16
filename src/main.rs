@@ -185,6 +185,7 @@ async fn handle_connection(
                         "GET" => invoke_get(&mut stream, arr, &store).await?,
                         "INFO" => invoke_info(&mut stream, arr, &config).await?,
                         "REPLCONF" => send_simple_string(&mut stream, "OK").await?,
+                        "PSYNC" => invoke_psync(&mut stream, &config).await?,
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
@@ -271,6 +272,17 @@ async fn invoke_info(
     }
     // send_bulk_string(stream, "").await
     todo!()
+}
+
+async fn invoke_psync(stream: &mut TcpStream, config: &Arc<Config>) -> anyhow::Result<()> {
+    send_simple_string(
+        stream,
+        &format!(
+            "FULLRESYNC {} {}",
+            config.replication_id, config.replication_offset
+        ),
+    )
+    .await
 }
 
 async fn send_simple_string(stream: &mut TcpStream, msg: &str) -> anyhow::Result<()> {
