@@ -130,7 +130,7 @@ async fn invoke_get(
             Some(expiry) if expiry <= Instant::now() => {
                 println!("expired");
                 // entry exists but is expired
-                store.lock().await.remove(k);
+                // let _ = store.lock().await.remove(k);
                 send_null(stream).await
             }
             _ => {
