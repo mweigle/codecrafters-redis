@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -11,9 +12,20 @@ use tokio::{
     sync::Mutex,
 };
 
+const DEFAULT_PORT: &str = "6379";
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:6379").await?;
+    let mut port = DEFAULT_PORT.to_string();
+    let mut args = env::args();
+    while let Some(arg) = args.next() {
+        if arg == "--port" {
+            if let Some(p) = args.next() {
+                port = p;
+            }
+        }
+    }
+    let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
     let store = Arc::new(Mutex::new(HashMap::new()));
     loop {
         match listener.accept().await {
@@ -113,7 +125,11 @@ async fn invoke_get(
     };
     match store.lock().await.get(k) {
         Some(v) => match v.expiry {
-            Some(expiry) if expiry <= Instant::now() => send_null(stream).await,
+            Some(expiry) if expiry <= Instant::now() => {
+                // entry exists but is expired
+                store.lock().await.remove(k);
+                send_null(stream).await
+            }
             _ => send_bulk_string(stream, &v.value).await,
         },
         None => send_null(stream).await,
