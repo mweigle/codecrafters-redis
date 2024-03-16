@@ -1,6 +1,8 @@
 use std::{
     collections::HashMap,
     env,
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -16,8 +18,8 @@ const DEFAULT_PORT: &str = "6379";
 
 #[derive(Debug)]
 struct ReplicaOf {
-    master_host: String,
-    master_port: String,
+    master_host: IpAddr,
+    master_port: u16,
 }
 
 #[derive(Debug)]
@@ -50,10 +52,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         if arg == "--replicaof" {
-            if let (Some(master_host), Some(master_port)) = (args.next(), args.next()) {
+            if let (Some(host), Some(port)) = (args.next(), args.next()) {
                 config.replica_of = Some(ReplicaOf {
-                    master_host,
-                    master_port,
+                    master_host: IpAddr::V4(Ipv4Addr::from_str(&host)?),
+                    master_port: port.parse()?,
                 });
             }
         }
@@ -62,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     let store = Arc::new(Mutex::new(HashMap::new()));
 
     if let Some(repl_config) = &config.replica_of {
-        master_handshake(repl_config).await?;
+        ping_master(repl_config).await?;
     }
 
     let config = Arc::new(config);
@@ -99,7 +101,7 @@ struct StoreValue {
     expiry: Option<Instant>,
 }
 
-async fn master_handshake(repl_config: &ReplicaOf) -> anyhow::Result<()> {
+async fn ping_master(repl_config: &ReplicaOf) -> anyhow::Result<()> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
         repl_config.master_host, repl_config.master_port
@@ -138,9 +140,38 @@ async fn handle_connection(
                     }
                 }
             }
+            DataType::SimpleString(s) if s == "PONG" => {
+                if let Some(replica) = &config.replica_of {
+                    let addr = stream.peer_addr()?;
+                    if addr.ip() == replica.master_host && addr.port() == replica.master_port {
+                        complete_handshake(&mut stream, &config).await?;
+                    }
+                }
+            }
             other => anyhow::bail!("{:?} not yet implemented!", other),
         }
     }
+}
+
+async fn complete_handshake(stream: &mut TcpStream, config: &Arc<Config>) -> anyhow::Result<()> {
+    send_array(
+        stream,
+        &[
+            DataType::BulkString("REPLCONF".to_string()),
+            DataType::BulkString("listening-port".to_string()),
+            DataType::BulkString(config.port.clone()),
+        ],
+    )
+    .await?;
+    send_array(
+        stream,
+        &[
+            DataType::BulkString("REPLCONF".to_string()),
+            DataType::BulkString("capa".to_string()),
+            DataType::BulkString("psync2".to_string()),
+        ],
+    )
+    .await
 }
 
 async fn invoke_set(
