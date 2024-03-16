@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     let store = Arc::new(Mutex::new(HashMap::new()));
 
     if let Some(repl_config) = &config.replica_of {
-        ping_master(repl_config).await?;
+        master_handshake(repl_config, &config.port).await?;
     }
 
     let config = Arc::new(config);
@@ -104,13 +104,37 @@ struct StoreValue {
     expiry: Option<Instant>,
 }
 
-async fn ping_master(repl_config: &ReplicaOf) -> anyhow::Result<()> {
+async fn master_handshake(repl_config: &ReplicaOf, port: &str) -> anyhow::Result<()> {
     let mut stream = TcpStream::connect(format!(
         "{}:{}",
         repl_config.master_host, repl_config.master_port
     ))
     .await?;
-    send_array(&mut stream, &[DataType::BulkString("ping".to_string())]).await
+    send_array(&mut stream, &[DataType::BulkString("ping".to_string())]).await?;
+    let mut reader = BufReader::new(&mut stream);
+    let data_type = parse_data_type(&mut reader).await?;
+    let DataType::SimpleString(s) = data_type else {
+        anyhow::bail!("master sent unexpected response");
+    };
+    assert_eq!(s, "PONG", "'{s}' was sent instead of PONG");
+    send_array(
+        &mut stream,
+        &[
+            DataType::BulkString("REPLCONF".to_string()),
+            DataType::BulkString("listening-port".to_string()),
+            DataType::BulkString(port.to_string()),
+        ],
+    )
+    .await?;
+    send_array(
+        &mut stream,
+        &[
+            DataType::BulkString("REPLCONF".to_string()),
+            DataType::BulkString("capa".to_string()),
+            DataType::BulkString("psync2".to_string()),
+        ],
+    )
+    .await
 }
 
 async fn handle_connection(
@@ -143,38 +167,9 @@ async fn handle_connection(
                     }
                 }
             }
-            DataType::SimpleString(s) if s == "PONG" => {
-                if let Some(replica) = &config.replica_of {
-                    let addr = stream.peer_addr()?;
-                    if addr.ip() == replica.master_host && addr.port() == replica.master_port {
-                        complete_handshake(&mut stream, &config).await?;
-                    }
-                }
-            }
             other => anyhow::bail!("{:?} not yet implemented!", other),
         }
     }
-}
-
-async fn complete_handshake(stream: &mut TcpStream, config: &Arc<Config>) -> anyhow::Result<()> {
-    send_array(
-        stream,
-        &[
-            DataType::BulkString("REPLCONF".to_string()),
-            DataType::BulkString("listening-port".to_string()),
-            DataType::BulkString(config.port.clone()),
-        ],
-    )
-    .await?;
-    send_array(
-        stream,
-        &[
-            DataType::BulkString("REPLCONF".to_string()),
-            DataType::BulkString("capa".to_string()),
-            DataType::BulkString("psync2".to_string()),
-        ],
-    )
-    .await
 }
 
 async fn invoke_set(
