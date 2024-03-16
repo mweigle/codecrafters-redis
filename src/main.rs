@@ -60,6 +60,11 @@ async fn main() -> anyhow::Result<()> {
     }
     let listener = TcpListener::bind(format!("127.0.0.1:{}", config.port)).await?;
     let store = Arc::new(Mutex::new(HashMap::new()));
+
+    if let Some(repl_config) = &config.replica_of {
+        master_handshake(repl_config).await?;
+    }
+
     let config = Arc::new(config);
     loop {
         match listener.accept().await {
@@ -92,6 +97,15 @@ type Store = Arc<Mutex<HashMap<String, StoreValue>>>;
 struct StoreValue {
     value: String,
     expiry: Option<Instant>,
+}
+
+async fn master_handshake(repl_config: &ReplicaOf) -> anyhow::Result<()> {
+    let mut stream = TcpStream::connect(format!(
+        "{}:{}",
+        repl_config.master_host, repl_config.master_port
+    ))
+    .await?;
+    send_array(&mut stream, &[DataType::BulkString("ping".to_string())]).await
 }
 
 async fn handle_connection(
@@ -227,6 +241,20 @@ async fn send_null(stream: &mut TcpStream) -> anyhow::Result<()> {
         .write_all(b"$-1\r\n")
         .await
         .context("failed to send <null> bulk string")
+}
+
+async fn send_array(stream: &mut TcpStream, data: &[DataType]) -> anyhow::Result<()> {
+    stream
+        .write_all(format!("*{}\r\n", data.len()).as_bytes())
+        .await
+        .with_context(|| format!("failed to send array length for {:?}", data))?;
+    for dt in data {
+        match dt {
+            DataType::BulkString(bs) => send_bulk_string(stream, bs).await?,
+            _ => anyhow::bail!("not yet implemented!"),
+        }
+    }
+    Ok(())
 }
 
 async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Result<DataType> {
