@@ -52,7 +52,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         if arg == "--replicaof" {
-            if let (Some(host), Some(port)) = (args.next(), args.next()) {
+            if let (Some(mut host), Some(port)) = (args.next(), args.next()) {
+                if host == "localhost" {
+                    host = "127.0.0.1".to_string();
+                }
                 config.replica_of = Some(ReplicaOf {
                     master_host: IpAddr::V4(Ipv4Addr::from_str(&host)?),
                     master_port: port.parse()?,
