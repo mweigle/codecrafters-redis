@@ -1,16 +1,20 @@
+use std::{collections::HashMap, sync::Arc};
+
 use anyhow::Context;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
+    sync::Mutex,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
+    let store = Arc::new(Mutex::new(HashMap::new()));
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                tokio::spawn(handle_connection(stream));
+                tokio::spawn(handle_connection(stream, Arc::clone(&store)));
             }
             Err(e) => {
                 anyhow::bail!("error: {}", e);
@@ -28,7 +32,10 @@ enum DataType {
     Array(Vec<DataType>),
 }
 
-async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
+async fn handle_connection(
+    mut stream: TcpStream,
+    store: Arc<Mutex<HashMap<String, String>>>,
+) -> anyhow::Result<()> {
     loop {
         let mut reader = BufReader::new(&mut stream);
         let data_type = parse_data_type(&mut reader).await?;
@@ -47,8 +54,24 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
                             send_bulk_string(&mut stream, &echo_string).await?;
                         }
                         "ping" => send_simple_string(&mut stream, "PONG").await?,
-                        "set" => {}
-                        "get" => {}
+                        "set" => {
+                            let (DataType::BulkString(k), DataType::BulkString(v)) =
+                                (&arr[1], &arr[2])
+                            else {
+                                anyhow::bail!("key and value must be given");
+                            };
+                            store.lock().await.insert(k.clone(), v.clone());
+                            send_simple_string(&mut stream, "OK").await?;
+                        }
+                        "get" => {
+                            let DataType::BulkString(k) = &arr[1] else {
+                                anyhow::bail!("key must be given!");
+                            };
+                            match store.lock().await.get(k) {
+                                Some(v) => send_bulk_string(&mut stream, v).await?,
+                                None => send_null(&mut stream).await?,
+                            }
+                        }
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
@@ -72,6 +95,13 @@ async fn send_bulk_string(stream: &mut TcpStream, msg: &str) -> anyhow::Result<(
         .with_context(|| format!("failed to send bulk string '{msg}'"))
 }
 
+async fn send_null(stream: &mut TcpStream) -> anyhow::Result<()> {
+    stream
+        .write_all(b"$-1\r\n")
+        .await
+        .context("failed to send <null> bulk string")
+}
+
 async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Result<DataType> {
     let mut current_array = None;
     let mut s = String::new();
@@ -83,7 +113,13 @@ async fn parse_data_type(reader: &mut BufReader<&mut TcpStream>) -> anyhow::Resu
         let dt = match bytes.next().context("no data type given")? {
             '+' => DataType::SimpleString(s[1..].trim_end().to_string()),
             '-' => DataType::SimpleError(s[1..].trim_end().to_string()),
-            // ':' => DataType::Integer(todo!()), // TODO: probably does not work
+            ':' => {
+                let value_str = s[1..].trim_end();
+                let value = value_str
+                    .parse::<i64>()
+                    .with_context(|| format!("{value_str} is not a valid integer"))?;
+                DataType::Integer(value)
+            }
             '$' => {
                 let length_str = &s[1..bytes.take_while(|c| *c != '\r').count() + 1];
                 let length = length_str.parse().unwrap();
