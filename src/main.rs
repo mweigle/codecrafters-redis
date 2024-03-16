@@ -128,13 +128,20 @@ async fn invoke_get(
     match store.lock().await.get(k) {
         Some(v) => match v.expiry {
             Some(expiry) if expiry <= Instant::now() => {
+                println!("expired");
                 // entry exists but is expired
                 store.lock().await.remove(k);
                 send_null(stream).await
             }
-            _ => send_bulk_string(stream, &v.value).await,
+            _ => {
+                println!("send");
+                send_bulk_string(stream, &v.value).await
+            }
         },
-        None => send_null(stream).await,
+        None => {
+            println!("does not exist");
+            send_null(stream).await
+        }
     }
 }
 
