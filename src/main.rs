@@ -169,8 +169,8 @@ async fn handle_connection(
         match data_type {
             DataType::Array(arr) => {
                 if let DataType::BulkString(command) = arr.get(0).context("no command given")? {
-                    match command.as_str() {
-                        "echo" => {
+                    match command.to_ascii_uppercase().as_str() {
+                        "ECHO" => {
                             let DataType::BulkString(echo_string) =
                                 arr.get(1).with_context(|| {
                                     format!("command {command} needs a second argument")
@@ -180,10 +180,11 @@ async fn handle_connection(
                             };
                             send_bulk_string(&mut stream, &echo_string).await?;
                         }
-                        "ping" => send_simple_string(&mut stream, "PONG").await?,
-                        "set" => invoke_set(&mut stream, arr, &store).await?,
-                        "get" => invoke_get(&mut stream, arr, &store).await?,
-                        "info" => invoke_info(&mut stream, arr, &config).await?,
+                        "PING" => send_simple_string(&mut stream, "PONG").await?,
+                        "SET" => invoke_set(&mut stream, arr, &store).await?,
+                        "GET" => invoke_get(&mut stream, arr, &store).await?,
+                        "INFO" => invoke_info(&mut stream, arr, &config).await?,
+                        "REPLCONF" => send_simple_string(&mut stream, "OK").await?,
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
