@@ -79,7 +79,7 @@ async fn invoke_set(
     arr: Vec<DataType>,
     store: &Store,
 ) -> anyhow::Result<()> {
-    let mut args = arr.into_iter();
+    let mut args = arr.into_iter().skip(1);
     let (Some(DataType::BulkString(k)), Some(DataType::BulkString(v))) = (args.next(), args.next())
     else {
         anyhow::bail!("key and value must be bulk strings");
