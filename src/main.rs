@@ -77,6 +77,7 @@ async fn handle_connection(mut stream: TcpStream, store: Store) -> anyhow::Resul
                         "ping" => send_simple_string(&mut stream, "PONG").await?,
                         "set" => invoke_set(&mut stream, arr, &store).await?,
                         "get" => invoke_get(&mut stream, arr, &store).await?,
+                        "info" => invoke_info(&mut stream, arr).await?,
                         other => anyhow::bail!("command {other} is not yet implemented"),
                     }
                 }
@@ -123,26 +124,30 @@ async fn invoke_get(
     let DataType::BulkString(k) = &arr[1] else {
         anyhow::bail!("key must be given!");
     };
-    println!("get '{}': {:?}", k, store.lock().await.get(k));
-    println!("store atm: {:?}", store);
+    // println!("get '{}': {:?}", k, store.lock().await.get(k));
+    // println!("store atm: {:?}", store);
     match store.lock().await.get(k) {
         Some(v) => match v.expiry {
             Some(expiry) if expiry <= Instant::now() => {
-                println!("expired");
                 // entry exists but is expired
-                // let _ = store.lock().await.remove(k);
                 send_null(stream).await
             }
-            _ => {
-                println!("send");
-                send_bulk_string(stream, &v.value).await
-            }
+            _ => send_bulk_string(stream, &v.value).await,
         },
-        None => {
-            println!("does not exist");
-            send_null(stream).await
-        }
+        None => send_null(stream).await,
     }
+}
+
+async fn invoke_info(stream: &mut TcpStream, arr: Vec<DataType>) -> anyhow::Result<()> {
+    let mut args = arr.into_iter().skip(1);
+    let Some(DataType::BulkString(command)) = args.next() else {
+        anyhow::bail!("command must be given!")
+    };
+    if command == "replication" {
+        return send_bulk_string(stream, "role:master").await;
+    }
+    // send_bulk_string(stream, "").await
+    todo!()
 }
 
 async fn send_simple_string(stream: &mut TcpStream, msg: &str) -> anyhow::Result<()> {
